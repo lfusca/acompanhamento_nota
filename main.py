@@ -1,7 +1,8 @@
 ###############################################################################
 #  📊 Acompanhamento de Desempenho – FIAP Moodle + Streamlit                  #
-#  Versão: 03-jul-2025                                                        #
-#  • Conexão Oracle (python-oracledb)                                         #
+#  Versão: 05-jul-2025                                                        #
+#  • Credenciais Oracle lidas apenas de st.secrets (TOML)                     #
+#  • Conexão python-oracledb (pool)                                           #
 #  • Botão 🔄 Atualizar dados (cache clear + rerun)                            #
 #  • Sanitiza espaços em branco (strip)                                       #
 #  • Ranking “Ir Além”                                                        #
@@ -10,26 +11,36 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import oracledb
-import os
-from dotenv import load_dotenv
+from streamlit.errors import StreamlitSecretNotFoundError
 
-load_dotenv()
-
-ORCL_USER = os.getenv("ORCL_USER")
-ORCL_PWD  = os.getenv("ORCL_PWD")
-ORCL_DSN  = os.getenv("ORCL_DSN")
 # --------------------------------------------------------------------------- #
-# ORACLE POOL                                                                 #
+# CREDENCIAIS – exclusivamente via st.secrets                                 #
+# --------------------------------------------------------------------------- #
+try:
+    cfg = st.secrets["oracle"]
+    ORCL_USER = cfg["user"]
+    ORCL_PWD  = cfg["password"]
+    ORCL_DSN  = cfg["dsn"]
+except (KeyError, StreamlitSecretNotFoundError):
+    st.error(
+        "⚠️ Credenciais Oracle não encontradas.\n\n"
+        "• Produção: cole o bloco TOML em  Settings ▸ Secrets\n"
+        "• Local: crie .streamlit/secrets.toml com o mesmo bloco"
+    )
+    st.stop()
+
+# --------------------------------------------------------------------------- #
+# POOL ORACLE                                                                 #
 # --------------------------------------------------------------------------- #
 POOL = oracledb.create_pool(
-    user=ORCL_USER,
-    password=ORCL_PWD,
-    dsn=ORCL_DSN,
-    min=1, max=4, increment=1
+    user      = ORCL_USER,
+    password  = ORCL_PWD,
+    dsn       = ORCL_DSN,
+    min       = 1, max = 4, increment = 1, timeout = 60
 )
 
 # --------------------------------------------------------------------------- #
-# FUNÇÕES DE ACESSO AO BANCO                                                  #
+# FUNÇÕES                                                                     #
 # --------------------------------------------------------------------------- #
 def _fetch_df(sql: str, params=()):
     """Executa consulta e devolve DataFrame, convertendo CLOB→str e strip()."""
@@ -44,8 +55,7 @@ def _fetch_df(sql: str, params=()):
                 for c in row
             ]
 
-        rows = [fix(r) for r in cur.fetchall()]
-    return pd.DataFrame(rows, columns=cols)
+        return pd.DataFrame([fix(r) for r in cur.fetchall()], columns=cols)
 
 
 @st.cache_data(show_spinner=False)
@@ -55,21 +65,21 @@ def carregar_dados():
                nome_atividade, nota_maxima
         FROM   atividades
     """)
-
     alu = _fetch_df("""
         SELECT id_atividade, id_aluno, rm, nome,
                nota, feedback, ir_alem
         FROM   alunos
     """)
 
-    # strip dos textos
+    # limpeza de textos
     for df in (atv, alu):
-        for col in ["id_atividade", "turma", "fase", "rm", "nome"]:
+        for col in ("id_atividade", "turma", "fase", "rm", "nome"):
             if col in df.columns:
                 df[col] = df[col].astype(str).str.strip()
 
     alu["nota"] = pd.to_numeric(
-        alu["nota"].astype(str).str.replace(",", "."), errors="coerce")
+        alu["nota"].astype(str).str.replace(",", "."), errors="coerce"
+    )
 
     dados = alu.merge(atv, on="id_atividade", how="left")
     dados["percentual"] = (
@@ -81,7 +91,6 @@ def carregar_dados():
 
 def resumo_alunos(df):
     def pct_faltas(x): return round(100 * x.isna().sum() / len(x))
-
     res = (df.groupby(["id_aluno", "rm", "nome"])["percentual"]
              .agg(media_pct="mean",
                   notas_lancadas=lambda x: x.notna().sum(),
@@ -99,7 +108,6 @@ def resumo_alunos(df):
 # --------------------------------------------------------------------------- #
 st.title("📊 Acompanhamento de Desempenho dos Alunos")
 
-# Botão para atualizar
 if st.sidebar.button("🔄 Atualizar dados"):
     carregar_dados.clear()
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
