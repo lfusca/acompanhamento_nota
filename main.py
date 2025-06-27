@@ -1,59 +1,38 @@
 ###############################################################################
 #  📊 Acompanhamento de Desempenho – FIAP Moodle + Streamlit                  #
-#  Versão: 05-jul-2025                                                        #
+#  Versão: 03-jul-2025                                                        #
 #  • Conexão Oracle (python-oracledb)                                         #
-#  • Lê credenciais de st.secrets (se existir) ou .env (local/VPS)            #
-#  • Botão 🔄 Atualizar dados                                                 #
+#  • Botão 🔄 Atualizar dados (cache clear + rerun)                            #
+#  • Sanitiza espaços em branco (strip)                                       #
 #  • Ranking “Ir Além”                                                        #
 ###############################################################################
-import os
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import oracledb
+import os
 from dotenv import load_dotenv
-from streamlit.errors import StreamlitSecretNotFoundError
 
-# --------------------------------------------------------------------------- #
-# CREDENCIAIS                                                                 #
-# --------------------------------------------------------------------------- #
-try:
-    oracle_cfg = st.secrets["oracle"]          # tenta ler no Streamlit Cloud
-    ORCL_USER = oracle_cfg["user"]
-    ORCL_PWD  = oracle_cfg["password"]
-    ORCL_DSN  = oracle_cfg["dsn"]
-except (KeyError, StreamlitSecretNotFoundError):
-    # Fallback: ambiente local / VPS
-    load_dotenv()                              # carrega .env na raiz
-    ORCL_USER = os.getenv("ORCL_USER")
-    ORCL_PWD  = os.getenv("ORCL_PWD")
-    ORCL_DSN  = os.getenv("ORCL_DSN")
+load_dotenv()
 
-# verifica se tudo chegou
-missing = [v for v in ("ORCL_USER", "ORCL_PWD", "ORCL_DSN")
-           if not globals().get(v)]
-if missing:
-    st.error("Credenciais ausentes: " + ", ".join(missing) +
-             ". Verifique .env ou st.secrets.")
-    st.stop()
-
+ORCL_USER = os.getenv("ORCL_USER")
+ORCL_PWD  = os.getenv("ORCL_PWD")
+ORCL_DSN  = os.getenv("ORCL_DSN")
 # --------------------------------------------------------------------------- #
 # ORACLE POOL                                                                 #
 # --------------------------------------------------------------------------- #
 POOL = oracledb.create_pool(
-    user      = ORCL_USER,
-    password  = ORCL_PWD,
-    dsn       = ORCL_DSN,
-    min       = 1,
-    max       = 4,
-    increment = 1,
-    timeout   = 60,
+    user=ORCL_USER,
+    password=ORCL_PWD,
+    dsn=ORCL_DSN,
+    min=1, max=4, increment=1
 )
 
 # --------------------------------------------------------------------------- #
 # FUNÇÕES DE ACESSO AO BANCO                                                  #
 # --------------------------------------------------------------------------- #
 def _fetch_df(sql: str, params=()):
+    """Executa consulta e devolve DataFrame, convertendo CLOB→str e strip()."""
     with POOL.acquire() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         cols = [d[0].lower() for d in cur.description]
@@ -83,7 +62,7 @@ def carregar_dados():
         FROM   alunos
     """)
 
-    # strip de textos
+    # strip dos textos
     for df in (atv, alu):
         for col in ["id_atividade", "turma", "fase", "rm", "nome"]:
             if col in df.columns:
@@ -120,6 +99,7 @@ def resumo_alunos(df):
 # --------------------------------------------------------------------------- #
 st.title("📊 Acompanhamento de Desempenho dos Alunos")
 
+# Botão para atualizar
 if st.sidebar.button("🔄 Atualizar dados"):
     carregar_dados.clear()
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
