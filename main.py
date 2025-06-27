@@ -1,31 +1,52 @@
 ###############################################################################
 #  📊 Acompanhamento de Desempenho – FIAP Moodle + Streamlit                  #
-#  Versão: 03-jul-2025                                                        #
+#  Versão: 04-jul-2025                                                        #
 #  • Conexão Oracle (python-oracledb)                                         #
+#  • Lê credenciais de st.secrets (Cloud) ou .env (local/VPS)                 #
 #  • Botão 🔄 Atualizar dados (cache clear + rerun)                            #
 #  • Sanitiza espaços em branco (strip)                                       #
 #  • Ranking “Ir Além”                                                        #
 ###############################################################################
+import os
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import oracledb
-import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# --------------------------------------------------------------------------- #
+# CREDENCIAIS – st.secrets  ➜  .env                                           #
+# --------------------------------------------------------------------------- #
+if "oracle" in st.secrets:                     # Streamlit Cloud
+    _cfg = st.secrets["oracle"]
+    ORCL_USER = _cfg["user"]
+    ORCL_PWD  = _cfg["password"]
+    ORCL_DSN  = _cfg["dsn"]
+else:                                          # Local ou VPS/Docker
+    load_dotenv()                              # carrega .env
+    ORCL_USER = os.getenv("ORCL_USER")
+    ORCL_PWD  = os.getenv("ORCL_PWD")
+    ORCL_DSN  = os.getenv("ORCL_DSN")
 
-ORCL_USER = os.getenv("ORCL_USER")
-ORCL_PWD  = os.getenv("ORCL_PWD")
-ORCL_DSN  = os.getenv("ORCL_DSN")
+for var, val in {"ORCL_USER": ORCL_USER,
+                 "ORCL_PWD": ORCL_PWD,
+                 "ORCL_DSN": ORCL_DSN}.items():
+    if not val:                                # falta alguma variável
+        st.error(f"Variável {var} não encontrada! "
+                 "Verifique .env ou st.secrets.")
+        st.stop()
+
 # --------------------------------------------------------------------------- #
 # ORACLE POOL                                                                 #
 # --------------------------------------------------------------------------- #
 POOL = oracledb.create_pool(
-    user=ORCL_USER,
-    password=ORCL_PWD,
-    dsn=ORCL_DSN,
-    min=1, max=4, increment=1
+    user      = ORCL_USER,
+    password  = ORCL_PWD,
+    dsn       = ORCL_DSN,
+    min       = 1,
+    max       = 4,
+    increment = 1,
+    timeout   = 60,           # encerra conexões ociosas após 60 s
 )
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +112,7 @@ def resumo_alunos(df):
     return (res.rename(columns={"rm":"RM", "nome":"Nome",
                                 "media_pct":"Média (%)",
                                 "notas_lancadas":"Notas lançadas",
-                                "pct_sem_nota":"% sem nota"})
+                                "pct_sem_nota":"% sem nota"} )
               .sort_values("Nome"))
 
 # --------------------------------------------------------------------------- #
