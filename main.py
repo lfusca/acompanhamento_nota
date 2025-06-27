@@ -1,10 +1,9 @@
 ###############################################################################
 #  📊 Acompanhamento de Desempenho – FIAP Moodle + Streamlit                  #
-#  Versão: 04-jul-2025                                                        #
+#  Versão: 05-jul-2025                                                        #
 #  • Conexão Oracle (python-oracledb)                                         #
-#  • Lê credenciais de st.secrets (Cloud) ou .env (local/VPS)                 #
-#  • Botão 🔄 Atualizar dados (cache clear + rerun)                            #
-#  • Sanitiza espaços em branco (strip)                                       #
+#  • Lê credenciais de st.secrets (se existir) ou .env (local/VPS)            #
+#  • Botão 🔄 Atualizar dados                                                 #
 #  • Ranking “Ir Além”                                                        #
 ###############################################################################
 import os
@@ -13,28 +12,30 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import oracledb
 from dotenv import load_dotenv
+from streamlit.errors import StreamlitSecretNotFoundError
 
 # --------------------------------------------------------------------------- #
-# CREDENCIAIS – st.secrets  ➜  .env                                           #
+# CREDENCIAIS                                                                 #
 # --------------------------------------------------------------------------- #
-if "oracle" in st.secrets:                     # Streamlit Cloud
-    _cfg = st.secrets["oracle"]
-    ORCL_USER = _cfg["user"]
-    ORCL_PWD  = _cfg["password"]
-    ORCL_DSN  = _cfg["dsn"]
-else:                                          # Local ou VPS/Docker
-    load_dotenv()                              # carrega .env
+try:
+    oracle_cfg = st.secrets["oracle"]          # tenta ler no Streamlit Cloud
+    ORCL_USER = oracle_cfg["user"]
+    ORCL_PWD  = oracle_cfg["password"]
+    ORCL_DSN  = oracle_cfg["dsn"]
+except (KeyError, StreamlitSecretNotFoundError):
+    # Fallback: ambiente local / VPS
+    load_dotenv()                              # carrega .env na raiz
     ORCL_USER = os.getenv("ORCL_USER")
     ORCL_PWD  = os.getenv("ORCL_PWD")
     ORCL_DSN  = os.getenv("ORCL_DSN")
 
-for var, val in {"ORCL_USER": ORCL_USER,
-                 "ORCL_PWD": ORCL_PWD,
-                 "ORCL_DSN": ORCL_DSN}.items():
-    if not val:                                # falta alguma variável
-        st.error(f"Variável {var} não encontrada! "
-                 "Verifique .env ou st.secrets.")
-        st.stop()
+# verifica se tudo chegou
+missing = [v for v in ("ORCL_USER", "ORCL_PWD", "ORCL_DSN")
+           if not globals().get(v)]
+if missing:
+    st.error("Credenciais ausentes: " + ", ".join(missing) +
+             ". Verifique .env ou st.secrets.")
+    st.stop()
 
 # --------------------------------------------------------------------------- #
 # ORACLE POOL                                                                 #
@@ -46,14 +47,13 @@ POOL = oracledb.create_pool(
     min       = 1,
     max       = 4,
     increment = 1,
-    timeout   = 60,           # encerra conexões ociosas após 60 s
+    timeout   = 60,
 )
 
 # --------------------------------------------------------------------------- #
 # FUNÇÕES DE ACESSO AO BANCO                                                  #
 # --------------------------------------------------------------------------- #
 def _fetch_df(sql: str, params=()):
-    """Executa consulta e devolve DataFrame, convertendo CLOB→str e strip()."""
     with POOL.acquire() as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         cols = [d[0].lower() for d in cur.description]
@@ -83,7 +83,7 @@ def carregar_dados():
         FROM   alunos
     """)
 
-    # strip dos textos
+    # strip de textos
     for df in (atv, alu):
         for col in ["id_atividade", "turma", "fase", "rm", "nome"]:
             if col in df.columns:
@@ -112,7 +112,7 @@ def resumo_alunos(df):
     return (res.rename(columns={"rm":"RM", "nome":"Nome",
                                 "media_pct":"Média (%)",
                                 "notas_lancadas":"Notas lançadas",
-                                "pct_sem_nota":"% sem nota"} )
+                                "pct_sem_nota":"% sem nota"})
               .sort_values("Nome"))
 
 # --------------------------------------------------------------------------- #
@@ -120,7 +120,6 @@ def resumo_alunos(df):
 # --------------------------------------------------------------------------- #
 st.title("📊 Acompanhamento de Desempenho dos Alunos")
 
-# Botão para atualizar
 if st.sidebar.button("🔄 Atualizar dados"):
     carregar_dados.clear()
     (st.rerun if hasattr(st, "rerun") else st.experimental_rerun)()
